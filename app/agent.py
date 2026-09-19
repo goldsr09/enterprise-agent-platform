@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic.v1.utils import truncate
 from app.tools.sql_tool import get_metrics_tool
 from langgraph.graph import MessagesState, StateGraph, START, END
-from app.tools.runbook_tool import search_runbook
+from app.tools.rag_tool import search_runbook_semantically
 
 class AgentState(MessagesState):
     insufficient_data: bool
@@ -24,8 +24,9 @@ model = ChatOpenAI(
 
 
 tools = [
-    search_runbook,
+    
     get_metrics_tool,
+    search_runbook_semantically,
 
 ]
 
