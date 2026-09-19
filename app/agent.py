@@ -17,7 +17,9 @@ class AgentState(MessagesState):
 load_dotenv()
 
 model = ChatOpenAI(
-    model="gpt-5.6-luna"
+    model="gpt-5.6-luna",
+    reasoning_effort="none"
+
 )
 
 
@@ -73,14 +75,17 @@ def execute_tools(state: AgentState):
 
         
         tool_message = ToolMessage(
-            content=json.dumps(result, default=str),
-            tool_call_id=tool_call["id"]
+                    content=content,
+                    tool_call_id=tool_call["id"],
+                    status=message_status
         )
         tool_messages.append(tool_message)
 
-    return {"messages": tool_messages,
-    "insufficient_data": insufficient_data}
-
+    return {
+        "messages": tool_messages,
+        "insufficient_data": insufficient_data,
+        "tool_error": tool_error
+        }
 
 def route_after_model(state: AgentState):
     last_message = state["messages"][-1]
