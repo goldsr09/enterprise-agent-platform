@@ -1,0 +1,132 @@
+
+
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+import json
+from langchain_core.messages import HumanMessage, ToolMessage
+from pydantic.v1.utils import truncate
+from app.tools.sql_tool import get_metrics_tool
+from langgraph.graph import MessagesState, StateGraph, START, END
+from app.tools.runbook_tool import search_runbook
+
+class AgentState(MessagesState):
+    insufficient_data: bool
+    tool_error: bool
+
+
+load_dotenv()
+
+model = ChatOpenAI(
+    model="gpt-5.6-luna"
+)
+
+
+tools = [
+    search_runbook,
+    get_metrics_tool,
+
+]
+
+tools_by_name= { tool.name: tool for tool in tools}
+
+
+
+model_with_tools = model.bind_tools(tools)
+
+def call_model(state: AgentState):
+    response = model_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+def execute_tools(state: AgentState):
+    last_message = state["messages"][-1]
+    tool_messages = []
+    insufficient_data = state.get("insufficient_data", False)
+    tool_error = state.get("tool_error", False)
+
+
+
+    for tool_call in last_message.tool_calls:
+        try:
+            tool = tools_by_name[tool_call["name"]]
+            result = tool.invoke(tool_call["args"])
+            print(result)
+        
+
+
+            if tool_call["name"] == "get_metrics_tool" and not result:
+                insufficient_data = True
+        
+            content = json.dumps(result, default=str)
+        
+            message_status = "success"
+
+        except Exception as error:
+            print(f"{tool_call['name']} failed: {error}")
+
+            tool_error = True
+            content = (
+                f"{tool_call['name']} failed with "
+                f"{type(error).__name__}."
+            )
+            message_status = "error"
+
+        
+        tool_message = ToolMessage(
+            content=json.dumps(result, default=str),
+            tool_call_id=tool_call["id"]
+        )
+        tool_messages.append(tool_message)
+
+    return {"messages": tool_messages,
+    "insufficient_data": insufficient_data}
+
+
+def route_after_model(state: AgentState):
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+
+    return END
+
+
+builder = StateGraph[
+    AgentState,
+    None,
+    AgentState,
+    AgentState
+](AgentState)
+builder.add_node("model", call_model)
+builder.add_node("tools", execute_tools)
+
+
+builder.add_edge(START, "model")
+
+builder.add_conditional_edges(
+    "model",
+    route_after_model,
+    ["tools", END]
+)
+
+builder.add_edge("tools", "model")
+
+agent_graph = builder.compile()
+
+
+def investigate(question: str):
+    result = agent_graph.invoke({
+        "messages": [HumanMessage(content=question)],
+        "insufficient_data": False,
+        "tool_error": False
+    })
+    if result["tool_error"]:
+        status = "error"
+    elif result["insufficient_data"]:
+        status = "insufficient_data"
+    else:
+        status = "completed"
+
+    return {
+        "answer": result["messages"][-1].content,
+        "status": status
+    }
