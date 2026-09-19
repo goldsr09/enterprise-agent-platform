@@ -17,8 +17,16 @@ RUNBOOK_PATH = (
 def build_vector_store():
     runbook_text = RUNBOOK_PATH.read_text()
     chunks = [chunk.strip() for chunk in runbook_text.split("\n\n") if chunk.strip()]
-    documents = [Document(page_content=chunk,metadata={"source": str(RUNBOOK_PATH)}) for chunk in chunks]
-
+    documents = [
+    Document(
+        page_content=chunk,
+        metadata={
+            "source": "runbooks/data_ingestion.md",
+            "chunk": chunk_number
+        }
+    )
+    for chunk_number, chunk in enumerate(chunks, start=1)
+]
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small"
     )
@@ -35,15 +43,18 @@ def build_vector_store():
 def search_runbook_semantically(query:str) -> list[dict]:
     """Search the operational runbook for passages relevant to a question."""
     vector_store = build_vector_store()
-    results = vector_store.similarity_search(
+    results = vector_store.similarity_search_with_score(
+
         query,
         k=2
     )
     return [
-        {
-            "content": document.page_content,
-            "source": document.metadata["source"]
-        }
-        for document in results
-    ]
+    {
+        "content": document.page_content,
+        "source": document.metadata["source"],
+        "chunk": document.metadata["chunk"],
+        "similarity_score": round(score, 3)
+    }
+    for document, score in results
+]
 

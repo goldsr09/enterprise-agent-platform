@@ -6,5 +6,9 @@ results = search_runbook_semantically.invoke({
 })
 
 for result in results:
-    print("\nSource:", result["source"])
+    print(
+        f"\nSource: {result['source']} "
+        f"(chunk {result['chunk']}, "
+        f"score {result['similarity_score']})"
+    )
     print(result["content"])
