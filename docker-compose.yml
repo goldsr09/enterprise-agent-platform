@@ -16,5 +16,32 @@ services:
       retries: 10
       start_period: 5s
 
+  api:
+    build: .
+    network_mode: host
+    environment:
+      DB_HOST: "127.0.0.1"
+      DB_PORT: "5432"
+      DB_NAME: agent_db
+      DB_USER: agent_user
+      DB_PASSWORD: agent_password
+      OPENAI_API_KEY: "${OPENAI_API_KEY:?OPENAI_API_KEY must be set}"
+      LANGSMITH_TRACING: "${LANGSMITH_TRACING:-false}"
+      LANGSMITH_PROJECT: "${LANGSMITH_PROJECT:-enterprise-agent-platform}"
+      LANGSMITH_API_KEY: "${LANGSMITH_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"
+      interval: 5s
+      timeout: 6s
+      retries: 12
+      start_period: 15s
+
 volumes:
   postgres_data:
