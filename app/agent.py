@@ -124,7 +124,19 @@ def investigate(question: str):
         "messages": [HumanMessage(content=question)],
         "insufficient_data": False,
         "tool_error": False
+    },
+    
+        config={
+             "run_name": "investigate",
+             "tags": [
+                 "api",
+                 "enterprise-agent"],
+            "metadata": {
+                "question_length": len(question)
+
+        }
     })
+    
     if result["tool_error"]:
         status = "error"
     elif result["insufficient_data"]:
