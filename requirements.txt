@@ -3,3 +3,4 @@ psycopg[binary]
 python-dotenv
 langchain-openai
 langgraph
+mcp[cli]>=2,<3
