@@ -1,0 +1,92 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      PROJECT_ID: seventh-azimuth-430506-q5
+      REGION: us-central1
+      SERVICE: enterprise-agent-api
+      IMAGE: us-central1-docker.pkg.dev/seventh-azimuth-430506-q5/enterprise-agent-platform/api
+      SERVICE_URL: https://enterprise-agent-api-kyanbv5hhq-uc.a.run.app
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build release image
+        run: docker build --platform linux/amd64 -t "$IMAGE:$GITHUB_SHA" .
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker authentication
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Push release image
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          RELEASE_IMAGE=$(docker image inspect "$IMAGE:$GITHUB_SHA" \
+            --format '{{index .RepoDigests 0}}')
+          echo "RELEASE_IMAGE=$RELEASE_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services update "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$RELEASE_IMAGE" \
+            --quiet
+
+      - name: Get token for API check
+        id: api_auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+          id_token_include_email: true
+
+      - name: Check deployed API
+        env:
+          ID_TOKEN: ${{ steps.api_auth.outputs.id_token }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --max-time 60 \
+            -H "Authorization: Bearer $ID_TOKEN" \
+            "$SERVICE_URL/"
+
+      - name: Record deployment
+        run: |
+          echo "Deployed commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: $RELEASE_IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          echo "URL: $SERVICE_URL" >> "$GITHUB_STEP_SUMMARY"
