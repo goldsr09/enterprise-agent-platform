@@ -38,6 +38,27 @@ resource "google_cloud_run_v2_service" "api" {
       }
 
       env {
+        name  = "LANGSMITH_TRACING"
+        value = "true"
+      }
+
+      env {
+        name  = "LANGSMITH_PROJECT"
+        value = "enterprise-agent-platform-production"
+      }
+
+      env {
+        name = "LANGSMITH_API_KEY"
+
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.langsmith_api_key.secret_id
+            version = "1"
+          }
+        }
+      }
+
+      env {
         name  = "DB_HOST"
         value = "/cloudsql/${google_sql_database_instance.postgres.connection_name}"
       }
@@ -110,6 +131,7 @@ resource "google_cloud_run_v2_service" "api" {
     google_project_service.cloud_run,
     google_project_iam_member.api_cloud_sql,
     google_secret_manager_secret_iam_member.api_openai_key,
-    google_secret_manager_secret_iam_member.api_database_password
+    google_secret_manager_secret_iam_member.api_database_password,
+    google_secret_manager_secret_iam_member.api_langsmith_key
   ]
 }
