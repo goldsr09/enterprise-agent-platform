@@ -31,3 +31,18 @@ resource "google_cloud_run_v2_service_iam_member" "github_invoker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.github_deployer.email}"
 }
+resource "google_cloud_run_v2_service_iam_member" "github_mcp_developer" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.mcp.name
+  role     = "roles/run.developer"
+  member   = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "github_mcp_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.mcp.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.github_deployer.email}"
+}

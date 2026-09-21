@@ -31,6 +31,8 @@ jobs:
       SERVICE: enterprise-agent-api
       IMAGE: us-central1-docker.pkg.dev/seventh-azimuth-430506-q5/enterprise-agent-platform/api
       SERVICE_URL: https://enterprise-agent-api-kyanbv5hhq-uc.a.run.app
+      MCP_SERVICE: enterprise-agent-mcp
+      MCP_SERVICE_URL: https://enterprise-agent-mcp-kyanbv5hhq-uc.a.run.app
 
     steps:
       - uses: actions/checkout@v6
@@ -57,9 +59,17 @@ jobs:
             --format '{{index .RepoDigests 0}}')
           echo "RELEASE_IMAGE=$RELEASE_IMAGE" >> "$GITHUB_ENV"
 
-      - name: Deploy to Cloud Run
+      - name: Deploy API to Cloud Run
         run: |
           gcloud run services update "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$RELEASE_IMAGE" \
+            --quiet
+
+      - name: Deploy MCP to Cloud Run
+        run: |
+          gcloud run services update "$MCP_SERVICE" \
             --project="$PROJECT_ID" \
             --region="$REGION" \
             --image="$RELEASE_IMAGE" \
@@ -85,8 +95,33 @@ jobs:
             -H "Authorization: Bearer $ID_TOKEN" \
             "$SERVICE_URL/"
 
+      - name: Set up Python for MCP check
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install MCP test dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Get token for MCP check
+        id: mcp_auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.MCP_SERVICE_URL }}
+          id_token_include_email: true
+
+      - name: Check deployed MCP tools
+        env:
+          MCP_ID_TOKEN: ${{ steps.mcp_auth.outputs.id_token }}
+        run: python test_mcp_cloud.py
+
       - name: Record deployment
         run: |
           echo "Deployed commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "Image: $RELEASE_IMAGE" >> "$GITHUB_STEP_SUMMARY"
-          echo "URL: $SERVICE_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "API URL: $SERVICE_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "MCP URL: $MCP_SERVICE_URL/mcp" >> "$GITHUB_STEP_SUMMARY"
