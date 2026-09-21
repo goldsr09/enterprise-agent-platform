@@ -1,0 +1,74 @@
+name: Terraform Plan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_project_id: seventh-azimuth-430506-q5
+      TF_VAR_region: us-central1
+      TF_VAR_deploy_api: "true"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+
+      - name: Authenticate for Terraform planning
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.TF_VAR_project_id }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_PLAN_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Read currently deployed API image
+        shell: bash
+        run: |
+          API_IMAGE=$(gcloud run services describe enterprise-agent-api \
+            --project="$TF_VAR_project_id" \
+            --region="$TF_VAR_region" \
+            --format='value(spec.template.spec.containers[0].image)')
+
+          if [ -z "$API_IMAGE" ]; then
+            echo "Could not determine the deployed API image."
+            exit 1
+          fi
+
+          echo "TF_VAR_api_image=$API_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Check Terraform formatting
+        run: terraform -chdir=infra fmt -check -recursive
+
+      - name: Initialize Terraform with shared state
+        run: terraform -chdir=infra init -input=false -lockfile=readonly
+
+      - name: Validate Terraform
+        run: terraform -chdir=infra validate
+
+      - name: Plan infrastructure changes
+        run: terraform -chdir=infra plan -input=false -lock-timeout=5m -no-color
