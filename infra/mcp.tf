@@ -1,7 +1,8 @@
 resource "google_cloud_run_v2_service" "mcp" {
-  project  = var.project_id
-  name     = "enterprise-agent-mcp"
-  location = var.region
+  project     = var.project_id
+  name        = "enterprise-agent-mcp"
+  description = "Authenticated MCP tools for metrics and operational runbooks"
+  location    = var.region
 
   deletion_protection = false
 
