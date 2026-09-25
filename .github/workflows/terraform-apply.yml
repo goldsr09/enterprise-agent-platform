@@ -1,0 +1,123 @@
+name: Terraform Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan_run_id:
+        description: "Run ID of the successful Terraform Plan you reviewed"
+        required: true
+        type: string
+      plan_attempt:
+        description: "Attempt number from the plan artifact name"
+        required: true
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      PROJECT_ID: seventh-azimuth-430506-q5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify selected Plan run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          PLAN_ATTEMPT: ${{ inputs.plan_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$PLAN_ATTEMPT" =~ ^[0-9]+$ ]]
+
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PLAN_RUN_ID/attempts/$PLAN_ATTEMPT" \
+            > "$RUNNER_TEMP/plan-run.json"
+
+          jq -e --arg sha "$GITHUB_SHA" '
+            .conclusion == "success" and
+            .head_branch == "main" and
+            .head_sha == $sha and
+            .path == ".github/workflows/terraform-plan.yml" and
+            (.event == "push" or .event == "workflow_dispatch")
+          ' "$RUNNER_TEMP/plan-run.json"
+
+          MAIN_SHA=$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            --jq '.object.sha')
+
+          if [ "$MAIN_SHA" != "$GITHUB_SHA" ]; then
+            echo "Main has changed. Generate and review a fresh plan."
+            exit 1
+          fi
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v8
+        with:
+          name: terraform-plan-${{ inputs.plan_run_id }}-${{ inputs.plan_attempt }}
+          path: infra
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run_id }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.3"
+
+      - name: Authenticate for Terraform apply
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_APPLY_SERVICE_ACCOUNT }}
+
+      - name: Initialize Terraform with shared state
+        run: terraform -chdir=infra init -input=false -lockfile=readonly
+
+      - name: Check plan scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra show -json reviewed.tfplan |
+            jq -e '
+              all(.resource_changes[]?;
+                .change.actions == ["no-op"] or
+                (
+                  (
+                    .address == "google_cloud_run_v2_service.api[0]" or
+                    .address == "google_cloud_run_v2_service.mcp"
+                  ) and
+                  .change.actions == ["update"]
+                )
+              )
+            '
+
+      - name: Display reviewed plan
+        run: terraform -chdir=infra show -no-color reviewed.tfplan
+
+      - name: Apply reviewed plan
+        run: |
+          terraform -chdir=infra apply \
+            -input=false \
+            -lock-timeout=5m \
+            reviewed.tfplan
