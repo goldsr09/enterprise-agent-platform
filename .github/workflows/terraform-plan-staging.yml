@@ -1,0 +1,77 @@
+name: Terraform Plan Staging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/staging/**"
+      - ".github/workflows/terraform-plan-staging.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-infrastructure
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      PROJECT_ID: seventh-azimuth-430506-q5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.3"
+
+      - name: Authenticate for staging planning
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_PLAN_SERVICE_ACCOUNT }}
+
+      - name: Check staging formatting
+        run: terraform -chdir=infra/staging fmt -check -recursive
+
+      - name: Initialize staging backend
+        run: terraform -chdir=infra/staging init -input=false -lockfile=readonly
+
+      - name: Validate staging configuration
+        run: terraform -chdir=infra/staging validate
+
+      - name: Plan staging infrastructure changes
+        run: |
+          terraform -chdir=infra/staging plan \
+            -input=false \
+            -lock-timeout=5m \
+            -no-color \
+            -out=reviewed.tfplan
+
+      - name: Create readable staging plan
+        run: |
+          terraform -chdir=infra/staging show -no-color reviewed.tfplan \
+            > infra/staging/reviewed-plan.txt
+
+      - name: Save staging plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-plan-staging-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            infra/staging/reviewed.tfplan
+            infra/staging/reviewed-plan.txt
+          retention-days: 3
+          if-no-files-found: error

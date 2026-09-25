@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "infra/**"
+      - "!infra/staging/**"
       - ".github/workflows/terraform-plan.yml"
   workflow_dispatch:
 
